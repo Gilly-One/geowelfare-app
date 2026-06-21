@@ -1,0 +1,55 @@
+(async function(){
+  const root = await GWF.components.initPage('Yearly Reports', {adminOnly:true});
+  const [members, transactions] = await Promise.all([GWF.db.all('members'), GWF.db.all('transactions')]);
+  root.innerHTML = `<div class="toolbar no-print"><div class="filters"><input type="number" id="year" value="${GWF.currentYear()}"><select id="status"><option value="" selected>All effective statuses</option><option>Active</option><option>Inactive</option><option>Suspended</option><option>Retired</option></select></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn secondary" id="csvBtn">Export CSV</button><button class="btn secondary" id="pngBtn">PNG</button><button class="btn secondary" id="jpegBtn">JPEG</button><button class="btn secondary" id="pdfBtn">PDF / Save as PDF</button><button class="btn" id="printBtn">Print</button></div></div><div class="card"><div class="card-header no-print"><div><h3 id="title">Annual payment grid</h3><p class="sub">Member × month amount matrix. Retired members are hidden in years where they made no payment.</p></div></div><div class="table-wrap" id="grid"></div></div><div id="exportHolder" style="position:fixed;left:-10000px;top:0;background:#fff"></div>`;
+
+  function amountFor(member, mon, y){
+    return transactions.filter(t => String(t.memberId)===String(member.memberId) && Number(t.year)===Number(y) && String(t.month||'').slice(0,3).toLowerCase()===mon.slice(0,3).toLowerCase()).reduce((s,t)=>s+Number(t.amount||0),0);
+  }
+  function reportRows(){
+    const y=Number(year.value), st=status.value;
+    return members.map(m=>{
+      const effective = GWF.memberEffectiveStatus(m, transactions);
+      const row={memberId:m.memberId,name:m.name,status:effective,savedStatus:m.status,months:{},total:0};
+      GWF.months.forEach(mon=>{ row.months[mon]=amountFor(m, mon, y); row.total+=row.months[mon]; });
+      return row;
+    }).filter(r => {
+      if (String(r.savedStatus || '').toLowerCase() === 'retired' && r.total <= 0) return false;
+      if (st && r.status !== st) return false;
+      return true;
+    });
+  }
+  function render(){
+    const rows=reportRows(); const y=year.value;
+    title.textContent=`Annual payment grid — ${y}`;
+    grid.innerHTML=`<table class="report-grid" id="reportTable"><thead><tr><th>Member ID</th><th>Name</th><th class="no-report-export">Status</th>${GWF.monthShort.map(m=>`<th>${m.toUpperCase()}</th>`).join('')}<th class="no-report-export">Total</th></tr></thead><tbody>${rows.map(r=>`<tr><td><strong>${GWF.escape(r.memberId)}</strong></td><td>${GWF.escape(r.name)}</td><td class="no-report-export">${GWF.statusBadge(r.status)}</td>${GWF.months.map(m=>`<td class="${r.months[m]>0?'paid':'unpaid'}">${r.months[m]>0?GWF.money(r.months[m]):''}</td>`).join('')}<td class="no-report-export"><strong>${GWF.money(r.total)}</strong></td></tr>`).join('')||'<tr><td colspan="16" class="empty-state">No data.</td></tr>'}</tbody><tfoot class="no-export no-report-export"><tr><th colspan="3">Monthly totals</th>${GWF.months.map(m=>`<th>${GWF.money(rows.reduce((s,r)=>s+r.months[m],0))}</th>`).join('')}<th>${GWF.money(rows.reduce((s,r)=>s+r.total,0))}</th></tr></tfoot></table>`;
+    GWF.addTopScroller(grid);
+  }
+  function csvRows(){ const rows=reportRows(); return [['Member ID','Name',...GWF.monthShort.map(m=>m.toUpperCase())],...rows.map(r=>[r.memberId,r.name,...GWF.months.map(m=>r.months[m] || '')])]; }
+  csvBtn.onclick=()=>GWF.downloadText(`annual-report-${year.value}-${GWF.todayISO()}.csv`, GWF.toCSV(csvRows()), 'text/csv');
+
+  function buildExportChunk(startMonth=0, count=12){
+    const rows = reportRows();
+    const months = GWF.months.slice(startMonth,startMonth+count);
+    const short = GWF.monthShort.slice(startMonth,startMonth+count).map(m=>m.toUpperCase());
+    return `<div class="export-surface" id="reportExportSurface"><h2>${GWF.escape(GWF.settings.organizationName)} — Annual Report ${GWF.escape(year.value)}</h2><p>Exported: ${GWF.todayISO()}${count<12 ? ` · Months: ${short.join(', ')}` : ''}</p><table class="report-grid report-export-table"><thead><tr><th>Member ID</th><th>Name</th>${short.map(m=>`<th>${m}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr><td><strong>${GWF.escape(r.memberId)}</strong></td><td>${GWF.escape(r.name)}</td>${months.map(m=>`<td>${r.months[m]>0?GWF.money(r.months[m]):''}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  }
+  async function exportImages(type='png'){
+    if (!window.html2canvas) return GWF.toast('Image export library not loaded. Check internet connection.', 'error');
+    const chunks = [[0,6],[6,6]];
+    for (let i=0;i<chunks.length;i++){
+      exportHolder.innerHTML = buildExportChunk(chunks[i][0], chunks[i][1]);
+      await new Promise(r=>setTimeout(r,100));
+      await GWF.downloadElementImage('reportExportSurface', `annual-report-${year.value}-${GWF.todayISO()}-part-${i+1}.${type==='jpeg'?'jpg':'png'}`, type);
+    }
+    exportHolder.innerHTML='';
+  }
+  function printReportOnly(){
+    const html = buildExportChunk(0,12).replace('id="reportExportSurface"','');
+    const w = window.open('', '_blank', 'width=1200,height=900');
+    w.document.write(`<!doctype html><html><head><title>Annual Report ${GWF.escape(year.value)}</title><link rel="stylesheet" href="assets/css/styles.css"><style>body{background:#fff;padding:18px}.export-surface{padding:0}.report-export-table{width:100%;min-width:0;font-size:10px}.report-export-table th,.report-export-table td{padding:6px 5px}@page{size:A4 landscape;margin:10mm}</style></head><body>${html}<script>window.onload=()=>{window.print()}<\/script></body></html>`);
+    w.document.close();
+  }
+  pngBtn.onclick=()=>exportImages('png'); jpegBtn.onclick=()=>exportImages('jpeg'); pdfBtn.onclick=printReportOnly; printBtn.onclick=printReportOnly;
+  year.oninput=render; status.onchange=render; render();
+})();

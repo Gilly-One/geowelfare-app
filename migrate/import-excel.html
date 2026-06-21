@@ -1,0 +1,73 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Excel Import · GMC Geology Department Welfare v1.0.3</title><link rel="stylesheet" href="../assets/css/styles.css">
+  <!-- Vercel Web Analytics + Speed Insights for static HTML deployment -->
+  <script defer src="/_vercel/insights/script.js"></script>
+  <script defer src="/_vercel/speed-insights/script.js"></script>
+</head><body class="auth-page" style="display:block;background:var(--bg)"><main class="content" style="max-width:1100px"><div class="card"><div class="brand"><div class="brand-mark">GMC</div><div><h1>Excel Workbook Import</h1><p>Import Membership, Dues, Reports, Receipt Archive, Beneficiaries and Coffers.</p></div></div><div class="notice" style="margin:18px 0"><strong>Important:</strong> member IDs are imported as text and preserved exactly as-is. No format conversion, padding, or renumbering is applied.</div><div class="field"><label>Select Excel workbook (.xlsx/.xlsm)</label><input type="file" id="file" accept=".xlsx,.xlsm,.xls"></div><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px"><button class="btn" id="previewBtn">Preview workbook</button><button class="btn secondary" id="importBtn" disabled>Import parsed data</button><a class="btn secondary" href="../settings.html">Back to app</a></div><div id="output" style="margin-top:18px"></div></div></main>
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script><script src="../assets/js/firebase-config.js"></script><script src="../assets/js/supabase-config.js"></script><script src="../assets/js/utils.js"></script><script src="../assets/js/data.js"></script><script src="../assets/js/auth.js"></script>
+<script>
+let parsed = null;
+function norm(v){ return String(v||'').trim().toLowerCase(); }
+function cell(row, names){ for(const n of names){ const key=Object.keys(row).find(k=>norm(k)===norm(n)); if(key && row[key]!==undefined && row[key]!==null && row[key]!=='') return row[key]; } return ''; }
+function sheetName(wb, namePart){ return wb.SheetNames.find(n=>n.toLowerCase().includes(namePart.toLowerCase())); }
+function sheetRows(wb, namePart){ const name=sheetName(wb,namePart); if(!name) return []; return XLSX.utils.sheet_to_json(wb.Sheets[name], {defval:'', raw:false}); }
+function normalizeMonth(v){ const s=norm(v).slice(0,3); const i=GWF.months.map(m=>m.slice(0,3).toLowerCase()).indexOf(s); return i>=0?GWF.months[i]:''; }
+function makeReceiptNo(year, seq){ return `${GWF.settings.receiptPrefix}-${year}-${String(seq).padStart(3,'0')}`; }
+function parseReportSheets(wb, membership){
+  const byId = new Map(membership.map(m=>[String(m.memberId),m]));
+  const tx=[]; let seq=900000;
+  wb.SheetNames.filter(n=>/report\s*20\d{2}/i.test(n)).forEach(name=>{
+    const yearMatch = name.match(/20\d{2}/); if(!yearMatch) return; const year=Number(yearMatch[0]);
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, defval:'', raw:false});
+    if(!rows.length) return;
+    const headerIndex = rows.findIndex(r => r.some(c=>norm(c).includes('member')) && r.some(c=>normalizeMonth(c)));
+    if(headerIndex<0) return;
+    const header = rows[headerIndex];
+    const idCol = header.findIndex(c=>['member id','id','memberid','staff id'].includes(norm(c)) || norm(c).includes('member id'));
+    const nameCol = header.findIndex(c=>['name','member name','full name'].includes(norm(c)) || norm(c)==='member');
+    const monthCols = header.map((h,i)=>({month:normalizeMonth(h),i})).filter(x=>x.month);
+    rows.slice(headerIndex+1).forEach(r=>{
+      const memberId = String(r[idCol]||'').trim();
+      const member = byId.get(memberId) || {};
+      const memberName = String(r[nameCol]||member.name||'').trim();
+      if(!memberId && !memberName) return;
+      monthCols.forEach(({month,i})=>{
+        const amount = GWF.parseAmount(r[i]);
+        if(amount>0){
+          tx.push({ id:'txn-'+GWF.uid('').slice(1), memberDocId:member.id||'', memberId, memberName, date:`${year}-${String(GWF.months.indexOf(month)+1).padStart(2,'0')}-01`, month, year, amount, mode:'Imported', adminName:'Excel Import', notes:`Imported from ${name}`, receiptNo:'' });
+        }
+      });
+    });
+  });
+  return tx;
+}
+function parseWorkbook(wb){
+  const membership = sheetRows(wb,'membership').map(r=>({ id:'member-'+GWF.uid('').slice(1), memberId:String(cell(r,['Member ID','ID','MemberId','Staff ID','Staff No'])).trim(), name:String(cell(r,['Name','Member Name','Full Name','Member'])).trim(), dateJoined:GWF.toDateInput(cell(r,['Date Joined','Joined','Date','Join Date'])), status:String(cell(r,['Status'])).trim()||'Active', contact:String(cell(r,['Contact','Phone','Telephone','Mobile','WhatsApp'])).trim(), email:String(cell(r,['Email','Email Address'])).trim(), notes:String(cell(r,['Notes','Remarks'])).trim() })).filter(m=>m.memberId||m.name);
+  const byId = new Map(membership.map(m=>[String(m.memberId),m]));
+  let dues = sheetRows(wb,'dues').map(r=>{ const memberId=String(cell(r,['Member ID','ID','MemberId','Staff ID','Staff No'])).trim(); const member=byId.get(memberId)||{}; const rawMonth=cell(r,['Month','Payment Month','For Month','Dues Month','Month Paid For']); const rawYear=cell(r,['Year','Payment Year','For Year','Dues Year']); const date=GWF.toDateInput(cell(r,['Date','Payment Date','Date Paid'])); const month=normalizeMonth(rawMonth) || (date ? GWF.months[new Date(date).getMonth()] : ''); const year=Number(rawYear)|| (date ? new Date(date).getFullYear() : new Date().getFullYear()); return { id:'txn-'+GWF.uid('').slice(1), memberDocId:member.id||'', memberId, memberName:String(cell(r,['Name','Member Name','Full Name','Member'])).trim()||member.name||'', date, month, year, amount:GWF.parseAmount(cell(r,['Amount','Dues','Monthly Dues','Amount Paid','Paid'])), mode:String(cell(r,['Mode','Payment Mode','Method'])).trim()||'Cash', adminName:String(cell(r,['Admin','Received By','Admin Name','Collector'])).trim()||GWF.settings.defaultAdminName, notes:String(cell(r,['Notes','Remarks','Description'])).trim(), receiptNo:String(cell(r,['Receipt','Receipt No','Receipt Number'])).trim() }; }).filter(t=>t.memberId||t.memberName||t.amount);
+  const reportTx = parseReportSheets(wb, membership);
+  if(reportTx.length) dues = dues.concat(reportTx.filter(rt => !dues.some(d=>String(d.memberId)===String(rt.memberId)&&d.month===rt.month&&Number(d.year)===Number(rt.year)&&Number(d.amount)===Number(rt.amount))));
+  const archive = sheetRows(wb,'archive');
+  let receipts = archive.length ? archive.map(r=>{ const memberId=String(cell(r,['Member ID','ID','MemberId','Staff ID','Staff No'])).trim(); const member=byId.get(memberId)||{}; const date=GWF.toDateInput(cell(r,['Date','Payment Date','Date Paid'])); const month=normalizeMonth(cell(r,['Month','Payment Month','For Month','Dues Month'])) || (date ? GWF.months[new Date(date).getMonth()] : ''); const year=Number(cell(r,['Year','Payment Year','For Year']))|| (date ? new Date(date).getFullYear() : new Date().getFullYear()); return { id:'rcp-'+GWF.uid('').slice(1), receiptNo:String(cell(r,['Receipt','Receipt No','Receipt Number'])).trim(), transactionId:'', memberDocId:member.id||'', memberId, memberName:String(cell(r,['Name','Member Name','Full Name','Member'])).trim()||member.name||'', contact:member.contact||'', email:member.email||'', date, month, year, amount:GWF.parseAmount(cell(r,['Amount','Dues','Monthly Dues','Amount Paid'])), mode:String(cell(r,['Mode','Payment Mode','Method'])).trim()||'Cash', adminName:String(cell(r,['Admin','Received By','Admin Name'])).trim()||GWF.settings.defaultAdminName, notes:String(cell(r,['Notes','Remarks','Description'])).trim() }; }).filter(r=>r.receiptNo) : dues.filter(t=>t.receiptNo).map(t=>({ id:'rcp-'+GWF.uid('').slice(1), receiptNo:t.receiptNo, transactionId:t.id, memberDocId:t.memberDocId, memberId:t.memberId, memberName:t.memberName, contact:(byId.get(String(t.memberId))||{}).contact||'', email:(byId.get(String(t.memberId))||{}).email||'', date:t.date, month:t.month, year:t.year, amount:t.amount, mode:t.mode, adminName:t.adminName, notes:t.notes }));
+  const beneficiaries = sheetRows(wb,'beneficiaries').map(r=>{ const keys=Object.keys(r); const amount=GWF.parseAmount(cell(r,['Amount','Amount Paid','Payout','Benefit Amount'])); let type=String(cell(r,['Type','Category','Beneficiary Type','Welfare Type','Benefit Type'])).trim(); let name=String(cell(r,['Name','Beneficiary','Beneficiary Name','Member Name','Recipient','Payee','Person','Beneficiary/Member'])).trim(); if(!name){ const fallbackKey=keys.find(k=>!['date','payment date','amount','amount paid','payout','type','category','beneficiary type','welfare type','benefit type','notes','remarks','description'].includes(norm(k)) && String(r[k]).trim()); name=fallbackKey?String(r[fallbackKey]).trim():''; } if(!type){ const txt=(String(cell(r,['Description','Notes','Remarks']))+' '+name).toLowerCase(); if(txt.includes('maternity')||txt.includes('paternity')) type='Maternity/Paternity'; else if(txt.includes('retire')) type='Retirement'; else if(txt.includes('mother')) type='Bereavement (Mother)'; else if(txt.includes('father')) type='Bereavement (Father)'; else if(txt.includes('ward')) type='Bereavement (Ward)'; else if(txt.includes('marriage')) type='Marriage'; else if(txt.includes('death')) type='Death of a Member'; } return { id:'ben-'+GWF.uid('').slice(1), date:GWF.toDateInput(cell(r,['Date','Payment Date'])), type, name, amount, notes:String(cell(r,['Notes','Remarks','Description'])).trim() }; }).filter(b=>b.name||b.amount);
+  const coffers = sheetRows(wb,'coffers').map(r=>({ id:'cof-'+GWF.uid('').slice(1), date:GWF.toDateInput(cell(r,['Date','Payment Date'])), source:String(cell(r,['Source','Description','Particulars','Details'])).trim(), amount:GWF.parseAmount(cell(r,['Amount','Amount Paid','Inflow'])), mode:String(cell(r,['Mode','Payment Mode','Method'])).trim(), notes:String(cell(r,['Notes','Remarks'])).trim() })).filter(c=>c.source||c.amount);
+  // Preserve imported receipt numbers wherever possible. If report sheets created transactions without receipt numbers, match them to Receipt Archive by member/month/year/amount. Generate only when Excel has no receipt number source.
+  let fallbackSeq = 1;
+  dues.forEach(t => {
+    if (!t.receiptNo) {
+      const match = receipts.find(r => String(r.memberId)===String(t.memberId) && Number(r.year)===Number(t.year) && String(r.month||'').slice(0,3).toLowerCase()===String(t.month||'').slice(0,3).toLowerCase() && (!r.amount || !t.amount || Number(r.amount)===Number(t.amount)));
+      t.receiptNo = match?.receiptNo || makeReceiptNo(t.year || new Date().getFullYear(), fallbackSeq++);
+    }
+  });
+  const existingReceiptNos = new Set(receipts.map(r=>r.receiptNo).filter(Boolean));
+  dues.forEach(t => {
+    if (t.receiptNo && !existingReceiptNos.has(t.receiptNo)) {
+      const member = byId.get(String(t.memberId)) || {};
+      receipts.push({ id:'rcp-'+GWF.uid('').slice(1), receiptNo:t.receiptNo, transactionId:t.id, memberDocId:t.memberDocId, memberId:t.memberId, memberName:t.memberName, contact:member.contact||'', email:member.email||'', date:t.date, month:t.month, year:t.year, amount:t.amount, mode:t.mode, adminName:t.adminName, notes:t.notes });
+      existingReceiptNos.add(t.receiptNo);
+    }
+  });
+  return {members:membership, transactions:dues, receipts, beneficiaries, coffers};
+}
+previewBtn.onclick=async()=>{ if(!file.files[0]) return GWF.toast('Choose a workbook first.','error'); if(!window.XLSX) return GWF.toast('SheetJS library did not load. Open with internet access.','error'); await GWF.db.init(); const data=await file.files[0].arrayBuffer(); const wb=XLSX.read(data); parsed=parseWorkbook(wb); output.innerHTML=`<div class="success">Workbook parsed successfully.</div><div class="table-wrap" style="margin-top:12px"><table><tbody><tr><th>Sheets</th><td>${wb.SheetNames.map(GWF.escape).join(', ')}</td></tr><tr><th>Members</th><td>${parsed.members.length}</td></tr><tr><th>Transactions</th><td>${parsed.transactions.length}</td></tr><tr><th>Receipts</th><td>${parsed.receipts.length}</td></tr><tr><th>Beneficiaries</th><td>${parsed.beneficiaries.length}</td></tr><tr><th>Coffers</th><td>${parsed.coffers.length}</td></tr></tbody></table></div><h3>Sample parsed data</h3><pre style="white-space:pre-wrap;background:#111827;color:white;padding:14px;border-radius:14px;overflow:auto">${GWF.escape(JSON.stringify({members:parsed.members.slice(0,3),transactions:parsed.transactions.slice(0,3),beneficiaries:parsed.beneficiaries.slice(0,3)},null,2))}</pre>`; importBtn.disabled=false; };
+importBtn.onclick=async()=>{ if(!parsed) return; if(!confirm('Import parsed data now? Existing data will not be deleted; duplicates are possible if you import twice.')) return; for(const col of ['members','transactions','receipts','beneficiaries','coffers']) await GWF.db.bulkPut(col, parsed[col]); GWF.toast('Import complete.','success'); output.insertAdjacentHTML('afterbegin','<div class="success">Import complete. Go back to the app and refresh.</div>'); };
+</script></body></html>

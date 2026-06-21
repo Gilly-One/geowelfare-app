@@ -1,0 +1,16 @@
+{
+  "members": [
+    {
+      "id": "sample-001",
+      "memberId": "GWF-001",
+      "name": "Sample Member",
+      "dateJoined": "2024-01-10",
+      "status": "Active",
+      "contact": "+233000000000"
+    }
+  ],
+  "transactions": [],
+  "receipts": [],
+  "beneficiaries": [],
+  "coffers": []
+}

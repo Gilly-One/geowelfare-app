@@ -1,0 +1,24 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Login · GMC Geology Department Welfare v1.0.3</title><link rel="stylesheet" href="assets/css/styles.css">
+  <!-- Vercel Web Analytics + Speed Insights for static HTML deployment -->
+  <script defer src="/_vercel/insights/script.js"></script>
+  <script defer src="/_vercel/speed-insights/script.js"></script>
+</head><body class="auth-page">
+  <main class="auth-card">
+    <div class="brand"><div class="brand-mark">GMC</div><div><h1>GMC Geology Department Welfare v1.0.3</h1><p>Modern Welfare Management App developed by Gilly®</p></div></div>
+    <h2>Sign in</h2>
+    <form id="loginForm" class="grid" style="gap:14px">
+      <div class="field"><label>Email</label><input type="email" id="email" placeholder="admin@example.com" required autocomplete="username"></div>
+      <div class="field"><label>Password</label><input type="password" id="password" placeholder="••••••••" required autocomplete="current-password"></div>
+      <button class="btn" type="submit">Login</button>
+      <button class="btn secondary" type="button" id="forgotBtn">Forgot password?</button>
+    </form>
+    <footer class="login-footer">© 2026 GEO Welfare &nbsp;|&nbsp; Developed by <a href="https://www.linkedin.com/in/gilbert-ansah-0080535b" target="_blank" rel="noopener"><strong>Gilbert C. Ansah</strong></a> &nbsp;|&nbsp; 📧 <a href="mailto:gilbertcansah@gmail.com">gilbertcansah@gmail.com</a> &nbsp;|&nbsp; 📞 +233 24 783 7440</footer>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="assets/js/firebase-config.js"></script><script src="assets/js/supabase-config.js"></script><script src="assets/js/utils.js"></script><script src="assets/js/data.js"></script><script src="assets/js/auth.js"></script>
+  <script>
+    const logoutReason = localStorage.getItem('gwf_logout_reason'); if(logoutReason){ GWF.toast(logoutReason, 'error'); localStorage.removeItem('gwf_logout_reason'); }
+    document.getElementById('loginForm').addEventListener('submit',async e=>{e.preventDefault();try{const user=await GWF.auth.login(email.value,password.value);location.href=user.role==='member'?'member-portal.html':'dashboard.html'}catch(err){GWF.toast(err.message,'error')}});
+    document.getElementById('forgotBtn').addEventListener('click',async()=>{const identifier=email.value.trim(); if(!identifier) return GWF.toast('Enter your registered email first.','error'); try{await GWF.auth.resetPassword(identifier); GWF.toast('Password reset instructions sent if the account exists.','success')}catch(err){GWF.toast(err.message,'error')}});
+  </script>
+</body></html>
