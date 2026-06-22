@@ -1,7 +1,7 @@
 var GWF = window.GWF || (window.GWF = {});
 
 GWF.db = (() => {
-  const collections = ['members','transactions','receipts','beneficiaries','coffers','users','settings','announcements','documents','messages'];
+  const collections = ['members','transactions','receipts','beneficiaries','coffers','users','settings','announcements','documents','messages','push_subscriptions'];
   const prefix = 'gwf_';
   let firebaseReady = false;
   let supabaseReady = false;
