@@ -183,6 +183,13 @@ GWF.db = (() => {
     if (!member) throw new Error('Member not found.');
     if (String(member.status || '').toLowerCase() === 'retired') throw new Error('Retired members cannot receive new dues payments unless their saved status is changed by an admin.');
     const year = Number(input.year);
+    const existingTransactions = await all('transactions');
+    const duplicate = existingTransactions.find(t =>
+      String(t.memberId) === String(member.memberId) &&
+      Number(t.year) === year &&
+      String(t.month || '').slice(0,3).toLowerCase() === String(input.month || '').slice(0,3).toLowerCase()
+    );
+    if (duplicate) throw new Error(`${member.name} has already paid for ${input.month} ${year}. Existing receipt: ${duplicate.receiptNo || 'N/A'}.`);
     const amount = GWF.parseAmount(input.amount || GWF.monthlyDuesForYear(year));
     const receiptNo = await nextReceiptNo(year);
     const transaction = await add('transactions', { memberDocId: member.id, memberId: member.memberId, memberName: member.name, date: input.date || GWF.todayISO(), month: input.month, year, amount, mode: input.mode || 'Cash', adminName: input.adminName || GWF.currentUser()?.displayName || GWF.settings.defaultAdminName, notes: input.notes || '', receiptNo });
